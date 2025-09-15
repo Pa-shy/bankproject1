@@ -5,25 +5,30 @@ import {
   FileText, 
   Monitor, 
   Database,
+  Users,
   ChevronRight
 } from 'lucide-react';
 
-type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database';
+type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database' | 'users';
 
 interface SidebarProps {
   currentView: View;
   onViewChange: (view: View) => void;
+  isAdmin: boolean;
 }
 
-const menuItems = [
+const getMenuItems = (isAdmin: boolean) => [
   { id: 'dashboard' as View, label: 'Dashboard', icon: BarChart3 },
   { id: 'upload' as View, label: 'Upload Data', icon: Upload },
   { id: 'reports' as View, label: 'Reports', icon: FileText },
   { id: 'monitor' as View, label: 'Real-time Monitor', icon: Monitor },
   { id: 'database' as View, label: 'Database', icon: Database },
+  ...(isAdmin ? [{ id: 'users' as View, label: 'User Management', icon: Users }] : [])
 ];
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isAdmin }) => {
+  const menuItems = getMenuItems(isAdmin);
+
   return (
     <div className="w-64 bg-white border-r border-gray-200 flex flex-col">
       <div className="p-6">

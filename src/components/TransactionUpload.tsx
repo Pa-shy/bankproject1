@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { dataAnalysisService } from '../utils/dataAnalysis';
+import { useAnalysis } from '../contexts/AnalysisContext';
+import { getAllCurrencies } from '../utils/currency';
 
 interface UploadedFile {
   id: string;
@@ -10,10 +13,13 @@ interface UploadedFile {
   status: 'uploading' | 'processing' | 'completed' | 'error';
   progress: number;
   records?: number;
+  dataType?: 'transactions' | 'charges' | 'auto';
 }
 
 export const TransactionUpload: React.FC = () => {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const { refreshData } = useAnalysis();
+  const currencies = getAllCurrencies();
 
   const onDrop = (acceptedFiles: File[]) => {
     const newFiles: UploadedFile[] = acceptedFiles.map(file => ({
@@ -22,57 +28,118 @@ export const TransactionUpload: React.FC = () => {
       size: file.size,
       type: file.type,
       status: 'uploading',
-      progress: 0
+      progress: 0,
+      dataType: 'auto'
     }));
 
     setUploadedFiles(prev => [...prev, ...newFiles]);
 
     // Simulate upload process
     newFiles.forEach(file => {
-      simulateUpload(file.id);
+      processFile(file.id, acceptedFiles.find(f => f.name === file.name)!);
     });
   };
 
-  const simulateUpload = (fileId: string) => {
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.random() * 20;
-      if (progress >= 100) {
-        progress = 100;
-        clearInterval(interval);
-        
-        setUploadedFiles(prev => prev.map(file => 
-          file.id === fileId 
-            ? { 
-                ...file, 
-                progress: 100, 
-                status: 'processing' 
-              } 
-            : file
-        ));
-
-        // Simulate processing
-        setTimeout(() => {
-          setUploadedFiles(prev => prev.map(file => 
-            file.id === fileId 
-              ? { 
-                  ...file, 
-                  status: 'completed',
-                  records: Math.floor(Math.random() * 10000) + 1000
-                } 
-              : file
+  const processFile = async (fileId: string, file: File) => {
+    try {
+      // Update progress
+      let progress = 0;
+      const progressInterval = setInterval(() => {
+        progress += Math.random() * 15;
+        if (progress < 90) {
+          setUploadedFiles(prev => prev.map(f => 
+            f.id === fileId ? { ...f, progress } : f
           ));
-        }, 2000);
+        }
+      }, 100);
+
+      // Read file content
+      const text = await file.text();
+      let data: any[] = [];
+
+      // Parse based on file type
+      if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+        data = parseCSV(text);
+      } else if (file.name.endsWith('.json')) {
+        data = JSON.parse(text);
       } else {
-        setUploadedFiles(prev => prev.map(file => 
-          file.id === fileId ? { ...file, progress } : file
-        ));
+        throw new Error('Unsupported file format');
       }
-    }, 200);
+
+      clearInterval(progressInterval);
+
+      // Set processing status
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === fileId ? { ...f, progress: 100, status: 'processing' } : f
+      ));
+
+      // Analyze data to determine type
+      const dataType = detectDataType(data);
+      
+      // Process the data
+      const recordsAdded = dataAnalysisService.addUploadedData(data, dataType);
+
+      // Update file status
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === fileId ? { 
+          ...f, 
+          status: 'completed',
+          records: recordsAdded,
+          dataType
+        } : f
+      ));
+
+      // Refresh analysis data
+      refreshData();
+
+    } catch (error) {
+      console.error('File processing error:', error);
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === fileId ? { ...f, status: 'error', progress: 0 } : f
+      ));
+    }
+  };
+
+  const parseCSV = (text: string): any[] => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const data = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+      const row: any = {};
+      
+      headers.forEach((header, index) => {
+        row[header] = values[index] || '';
+      });
+      
+      data.push(row);
+    }
+
+    return data;
+  };
+
+  const detectDataType = (data: any[]): 'transactions' | 'charges' => {
+    if (data.length === 0) return 'transactions';
+
+    const firstRow = data[0];
+    const keys = Object.keys(firstRow).map(k => k.toLowerCase());
+
+    // Check for charge-specific fields
+    if (keys.includes('charge_amount') || keys.includes('charge_id') || keys.includes('charge_type')) {
+      return 'charges';
+    }
+
+    // Default to transactions
+    return 'transactions';
   };
 
   const removeFile = (fileId: string) => {
     setUploadedFiles(prev => prev.filter(file => file.id !== fileId));
+    // Refresh data after removing file
+    refreshData();
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -180,7 +247,7 @@ export const TransactionUpload: React.FC = () => {
                   
                   <p className="text-sm text-gray-500 mb-2">
                     {formatFileSize(file.size)} 
-                    {file.records && ` • ${file.records.toLocaleString()} records processed`}
+                    {file.records && ` • ${file.records.toLocaleString()} ${file.dataType} processed`}
                   </p>
                   
                   {(file.status === 'uploading' || file.status === 'processing') && (
@@ -216,8 +283,9 @@ export const TransactionUpload: React.FC = () => {
             <h4 className="text-sm font-semibold text-gray-700 mb-2">Transaction Data</h4>
             <ul className="text-sm text-gray-600 space-y-1">
               <li>• transaction_id (required)</li>
+              <li>• <strong>amount</strong> (required)</li>
               <li>• customer_id</li>
-              <li>• amount</li>
+              <li>• currency (optional, defaults to USD)</li>
               <li>• timestamp</li>
               <li>• service_type</li>
               <li>• region</li>
@@ -227,13 +295,25 @@ export const TransactionUpload: React.FC = () => {
           <div>
             <h4 className="text-sm font-semibold text-gray-700 mb-2">Charge Data</h4>
             <ul className="text-sm text-gray-600 space-y-1">
-              <li>• charge_id (required)</li>
-              <li>• transaction_id</li>
-              <li>• charge_amount</li>
+              <li>• <strong>transaction_id</strong> (required)</li>
+              <li>• <strong>charge_amount</strong> (required)</li>
+              <li>• charge_id</li>
+              <li>• currency (optional, defaults to USD)</li>
               <li>• charge_type</li>
               <li>• applied_timestamp</li>
               <li>• status</li>
             </ul>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <h4 className="text-sm font-semibold text-gray-700 mb-2">Supported Currencies</h4>
+          <div className="flex flex-wrap gap-2">
+            {currencies.map(currency => (
+              <span key={currency.code} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                {currency.symbol} {currency.code} - {currency.name}
+              </span>
+            ))}
           </div>
         </div>
       </div>

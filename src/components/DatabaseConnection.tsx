@@ -1,37 +1,51 @@
 import React, { useState } from 'react';
 import { Database, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { databaseService } from '../utils/database';
+import { useAnalysis } from '../contexts/AnalysisContext';
 
 interface DatabaseConnectionProps {
   onConnectionChange: (connected: boolean) => void;
 }
 
 export const DatabaseConnection: React.FC<DatabaseConnectionProps> = ({ onConnectionChange }) => {
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const { setDatabaseConnection } = useAnalysis();
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>(
+    databaseService.isConnectionActive() ? 'connected' : 'disconnected'
+  );
   const [connectionDetails, setConnectionDetails] = useState({
-    host: 'localhost',
-    port: '5432',
-    database: 'transactions_db',
-    username: 'postgres',
-    password: ''
+    host: import.meta.env.VITE_DB_HOST || 'localhost',
+    port: import.meta.env.VITE_DB_PORT || '5433',
+    database: import.meta.env.VITE_DB_NAME || 'dummydb',
+    username: import.meta.env.VITE_DB_USER || 'dummydata',
+    password: import.meta.env.VITE_DB_PASSWORD || 'Test123'
   });
 
   const handleConnect = async () => {
     setConnectionStatus('connecting');
     
-    // Simulate connection process
-    setTimeout(() => {
-      if (connectionDetails.password) {
+    try {
+      const connected = await databaseService.connect();
+      
+      if (connected) {
         setConnectionStatus('connected');
+        setDatabaseConnection(true);
         onConnectionChange(true);
       } else {
         setConnectionStatus('error');
+        setDatabaseConnection(false);
         onConnectionChange(false);
       }
-    }, 2000);
+    } catch (error) {
+      setConnectionStatus('error');
+      setDatabaseConnection(false);
+      onConnectionChange(false);
+    }
   };
 
   const handleDisconnect = () => {
+    databaseService.disconnect();
     setConnectionStatus('disconnected');
+    setDatabaseConnection(false);
     onConnectionChange(false);
   };
 
@@ -160,7 +174,6 @@ export const DatabaseConnection: React.FC<DatabaseConnectionProps> = ({ onConnec
               value={connectionDetails.password}
               onChange={(e) => setConnectionDetails({ ...connectionDetails, password: e.target.value })}
               disabled={connectionStatus === 'connected'}
-              placeholder="Enter database password"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed outline-none transition-colors duration-200"
             />
           </div>
@@ -204,6 +217,7 @@ export const DatabaseConnection: React.FC<DatabaseConnectionProps> = ({ onConnec
   transaction_id VARCHAR(50) UNIQUE,
   customer_id VARCHAR(50),
   amount DECIMAL(10,2),
+  currency VARCHAR(3) DEFAULT 'USD',
   service_type VARCHAR(100),
   region VARCHAR(50),
   timestamp TIMESTAMP,
@@ -222,6 +236,7 @@ export const DatabaseConnection: React.FC<DatabaseConnectionProps> = ({ onConnec
   charge_id VARCHAR(50) UNIQUE,
   transaction_id VARCHAR(50),
   charge_amount DECIMAL(10,2),
+  currency VARCHAR(3) DEFAULT 'USD',
   charge_type VARCHAR(100),
   applied_timestamp TIMESTAMP,
   status VARCHAR(20)
