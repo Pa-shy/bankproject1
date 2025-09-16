@@ -72,6 +72,11 @@ class AuthService {
       this.users.push(newUser);
       this.credentials[userData.username] = userData.password;
 
+      // Store user in database if connected
+      const { databaseService } = await import('./database');
+      if (databaseService.isConnectionActive()) {
+        await databaseService.insertUser(newUser);
+      }
       return { success: true, user: newUser };
     } catch (error) {
       return { success: false, error: 'Registration failed' };

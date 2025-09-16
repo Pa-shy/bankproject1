@@ -41,6 +41,23 @@ export interface User {
   last_login?: string;
 }
 
+export interface ChargeRule {
+  id: string;
+  transaction_type: string;
+  sub_type: string;
+  currency: Currency;
+  charge_amount: number;
+  charge_type: 'fixed' | 'percentage';
+  min_amount?: number;
+  max_amount?: number;
+  created_at: string;
+}
+
+export interface TransactionType {
+  category: string;
+  subTypes: string[];
+}
+
 export type Currency = 'ZiG' | 'USD' | 'EUR' | 'ZAR' | 'GBP' | 'ZMW' | 'MWK';
 
 export interface CurrencyInfo {

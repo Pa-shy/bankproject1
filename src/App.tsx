@@ -5,6 +5,7 @@ import { DiscrepancyReports } from './components/DiscrepancyReports';
 import { RealTimeMonitor } from './components/RealTimeMonitor';
 import { DatabaseConnection } from './components/DatabaseConnection';
 import { UserManagement } from './components/UserManagement';
+import { ChargeRulesManagement } from './components/ChargeRulesManagement';
 import { Login } from './components/Login';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -12,7 +13,7 @@ import { AnalysisProvider } from './contexts/AnalysisContext';
 import { authService } from './utils/auth';
 import { databaseService } from './utils/database';
 
-type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database' | 'users';
+type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database' | 'users' | 'charge-rules';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -81,6 +82,8 @@ function App() {
         return <RealTimeMonitor />;
       case 'database':
         return <DatabaseConnection onConnectionChange={setIsConnected} />;
+      case 'charge-rules':
+        return <ChargeRulesManagement />;
       case 'users':
         return authService.isAdmin() ? <UserManagement /> : <Dashboard />;
       default:

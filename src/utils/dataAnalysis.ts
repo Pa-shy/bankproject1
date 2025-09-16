@@ -1,5 +1,6 @@
 import { Transaction, Charge, Discrepancy, Currency } from '../types';
 import { CURRENCIES } from './currency';
+import { chargeRulesService } from './chargeRules';
 
 export interface UploadedData {
   transactions: Transaction[];
@@ -12,21 +13,28 @@ export class DataAnalysisService {
     charges: []
   };
 
-  parseUploadedFile(data: any[], fileType: 'transactions' | 'charges'): any[] {
+  parseUploadedFile(data: any[], fileType: 'transactions' | 'charges' | 'auto'): any[] {
     if (!Array.isArray(data) || data.length === 0) return [];
+
+    // Auto-detect file type if not specified
+    if (fileType === 'auto') {
+      fileType = this.detectFileType(data);
+    }
 
     return data.map((row, index) => {
       const id = `${fileType}_${Date.now()}_${index}`;
       const timestamp = new Date().toISOString();
 
       if (fileType === 'transactions') {
-        // Required: transaction_id, amount
-        // Optional: customer_id, currency, service_type, region, status
+        // Required: transaction_id, amount or charge_amount
+        // Auto-detect amount field
+        const amount = parseFloat(row.amount || row.charge_amount || row.transaction_amount || 0);
+        
         return {
           id,
           transaction_id: row.transaction_id || row.id || `TXN-${id}`,
           customer_id: row.customer_id || row.customer || '',
-          amount: parseFloat(row.amount || row.charge_amount || 0),
+          amount,
           currency: this.detectCurrency(row.currency || 'USD'),
           service_type: row.service_type || row.type || '',
           region: row.region || '',
@@ -34,13 +42,14 @@ export class DataAnalysisService {
           status: row.status || 'processed'
         };
       } else {
-        // Required: transaction_id, charge_amount
-        // Optional: charge_id, currency, charge_type, status
+        // Required: transaction_id, charge_amount or amount
+        const chargeAmount = parseFloat(row.charge_amount || row.amount || 0);
+        
         return {
           id,
           charge_id: row.charge_id || row.id || `CHG-${id}`,
           transaction_id: row.transaction_id || row.transaction || '',
-          charge_amount: parseFloat(row.charge_amount || row.amount || 0),
+          charge_amount: chargeAmount,
           currency: this.detectCurrency(row.currency || 'USD'),
           charge_type: row.charge_type || row.type || '',
           applied_timestamp: row.applied_timestamp || row.timestamp || row.date || timestamp,
@@ -50,13 +59,33 @@ export class DataAnalysisService {
     }).filter(item => {
       // Filter out invalid records
       if (fileType === 'transactions') {
-        return item.transaction_id && !isNaN(item.amount) && item.amount > 0;
+        return item.transaction_id && !isNaN(item.amount) && item.amount >= 0;
       } else {
-        return item.transaction_id && !isNaN(item.charge_amount) && item.charge_amount > 0;
+        return item.transaction_id && !isNaN(item.charge_amount) && item.charge_amount >= 0;
       }
     });
   }
 
+  private detectFileType(data: any[]): 'transactions' | 'charges' {
+    if (data.length === 0) return 'transactions';
+
+    const firstRow = data[0];
+    const keys = Object.keys(firstRow).map(k => k.toLowerCase());
+
+    // Check for charge-specific fields
+    const chargeIndicators = ['charge_amount', 'charge_id', 'charge_type', 'applied_timestamp'];
+    const transactionIndicators = ['customer_id', 'service_type', 'region'];
+    
+    const chargeScore = chargeIndicators.filter(indicator => 
+      keys.some(key => key.includes(indicator.replace('_', '')))
+    ).length;
+    
+    const transactionScore = transactionIndicators.filter(indicator => 
+      keys.some(key => key.includes(indicator.replace('_', '')))
+    ).length;
+
+    return chargeScore > transactionScore ? 'charges' : 'transactions';
+  }
   private detectCurrency(currencyInput: string): Currency {
     const input = currencyInput.toUpperCase();
     
@@ -76,10 +105,11 @@ export class DataAnalysisService {
     return 'USD';
   }
 
-  addUploadedData(data: any[], type: 'transactions' | 'charges'): number {
+  addUploadedData(data: any[], type: 'transactions' | 'charges' | 'auto' = 'auto'): number {
     const parsedData = this.parseUploadedFile(data, type);
+    const actualType = type === 'auto' ? this.detectFileType(data) : type;
     
-    if (type === 'transactions') {
+    if (actualType === 'transactions') {
       this.uploadedData.transactions.push(...parsedData);
     } else {
       this.uploadedData.charges.push(...parsedData);
@@ -109,15 +139,18 @@ export class DataAnalysisService {
     transactions.forEach(transaction => {
       const relatedCharges = chargesByTransaction[transaction.transaction_id] || [];
       
+      // Get expected charge based on transaction type and service
+      const expectedCharge = this.getExpectedCharge(transaction);
+      
       if (relatedCharges.length === 0) {
         // Missing charges
         discrepancies.push({
           id: `missing_${transaction.id}`,
           transaction_id: transaction.transaction_id,
           type: 'missing',
-          amount: transaction.amount,
+          amount: expectedCharge,
           currency: transaction.currency,
-          description: 'No charges found for this transaction',
+          description: `Missing expected charge of ${expectedCharge} for ${transaction.service_type}`,
           timestamp: new Date().toISOString(),
           severity: 'high'
         });
@@ -127,20 +160,20 @@ export class DataAnalysisService {
           .filter(charge => charge.currency === transaction.currency)
           .reduce((sum, charge) => sum + charge.charge_amount, 0);
 
-        const difference = Math.abs(transaction.amount - totalCharges);
-        const threshold = transaction.amount * 0.01; // 1% threshold
+        const difference = Math.abs(expectedCharge - totalCharges);
+        const threshold = Math.max(expectedCharge * 0.01, 0.01); // 1% threshold or minimum 0.01
 
         if (difference > threshold) {
-          const type = totalCharges > transaction.amount ? 'overcharge' : 'undercharge';
+          const type = totalCharges > expectedCharge ? 'overcharge' : 'undercharge';
           discrepancies.push({
             id: `${type}_${transaction.id}`,
             transaction_id: transaction.transaction_id,
             type,
             amount: difference,
             currency: transaction.currency,
-            description: `${type === 'overcharge' ? 'Over' : 'Under'}charged by ${difference.toFixed(2)}`,
+            description: `${type === 'overcharge' ? 'Over' : 'Under'}charged by ${difference.toFixed(2)} (Expected: ${expectedCharge}, Actual: ${totalCharges})`,
             timestamp: new Date().toISOString(),
-            severity: difference > transaction.amount * 0.1 ? 'high' : 'medium'
+            severity: difference > expectedCharge * 0.1 ? 'high' : 'medium'
           });
         }
 
@@ -167,6 +200,42 @@ export class DataAnalysisService {
     return discrepancies;
   }
 
+  private getExpectedCharge(transaction: Transaction): number {
+    // Extract transaction type and subtype from service_type
+    const serviceType = transaction.service_type || '';
+    const [transactionType, subType] = this.parseServiceType(serviceType);
+    
+    if (!transactionType || !subType) {
+      return 0; // No expected charge if we can't determine the type
+    }
+    
+    return chargeRulesService.getExpectedCharge(
+      transactionType,
+      subType,
+      transaction.currency,
+      transaction.amount
+    );
+  }
+
+  private parseServiceType(serviceType: string): [string, string] {
+    // Parse service type to extract transaction category and sub-type
+    // Examples: "Withdrawal-ATM", "Transfer-Interbank", "Payment-Utility Bills"
+    
+    const parts = serviceType.split('-');
+    if (parts.length >= 2) {
+      return [parts[0].trim(), parts[1].trim()];
+    }
+    
+    // Try to match against known patterns
+    const lowerService = serviceType.toLowerCase();
+    
+    if (lowerService.includes('deposit')) return ['Deposits', 'Current'];
+    if (lowerService.includes('withdrawal') || lowerService.includes('atm')) return ['Withdrawal', 'ATM'];
+    if (lowerService.includes('transfer')) return ['Transfers', 'Intrabank'];
+    if (lowerService.includes('payment') || lowerService.includes('bill')) return ['Payments', 'Utility Bills'];
+    
+    return ['', ''];
+  }
   getAnalysisData(): any {
     const { transactions, charges } = this.uploadedData;
     const discrepancies = this.analyzeDiscrepancies();

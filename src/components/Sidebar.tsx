@@ -6,10 +6,11 @@ import {
   Monitor, 
   Database,
   Users,
+  Settings,
   ChevronRight
 } from 'lucide-react';
 
-type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database' | 'users';
+type View = 'dashboard' | 'upload' | 'reports' | 'monitor' | 'database' | 'users' | 'charge-rules';
 
 interface SidebarProps {
   currentView: View;
@@ -23,6 +24,7 @@ const getMenuItems = (isAdmin: boolean) => [
   { id: 'reports' as View, label: 'Reports', icon: FileText },
   { id: 'monitor' as View, label: 'Real-time Monitor', icon: Monitor },
   { id: 'database' as View, label: 'Database', icon: Database },
+  { id: 'charge-rules' as View, label: 'Charge Rules', icon: Settings },
   ...(isAdmin ? [{ id: 'users' as View, label: 'User Management', icon: Users }] : [])
 ];
 

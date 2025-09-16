@@ -8,11 +8,15 @@ import {
   Pause,
   Play
 } from 'lucide-react';
+import { databaseService } from '../utils/database';
+import { Currency } from '../types';
+import { getAllCurrencies } from '../utils/currency';
 
 interface Transaction {
   id: string;
   timestamp: string;
   amount: number;
+  currency: Currency;
   status: 'processing' | 'verified' | 'discrepancy';
   type: string;
   customerId: string;
@@ -20,12 +24,14 @@ interface Transaction {
 
 const generateMockTransaction = (): Transaction => {
   const statuses: ('processing' | 'verified' | 'discrepancy')[] = ['processing', 'verified', 'discrepancy'];
-  const types = ['Premium Service', 'Standard Service', 'Processing Fee', 'Tax', 'Discount'];
+  const types = ['Withdrawal-ATM', 'Transfer-Interbank', 'Payment-Utility Bills', 'Deposits-Savings', 'Transfer-Wire'];
+  const currencies: Currency[] = ['ZiG', 'USD', 'EUR', 'ZAR', 'GBP'];
   
   return {
     id: `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     timestamp: new Date().toISOString(),
     amount: Math.random() * 500 + 10,
+    currency: currencies[Math.floor(Math.random() * currencies.length)],
     status: statuses[Math.floor(Math.random() * statuses.length)],
     type: types[Math.floor(Math.random() * types.length)],
     customerId: `CUST-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
@@ -48,6 +54,20 @@ export const RealTimeMonitor: React.FC = () => {
     const interval = setInterval(() => {
       const newTransaction = generateMockTransaction();
       setTransactions(prev => [newTransaction, ...prev.slice(0, 49)]);
+      
+      // Store transaction in database if connected
+      if (databaseService.isConnectionActive()) {
+        databaseService.insertTransaction({
+          transaction_id: newTransaction.id,
+          customer_id: newTransaction.customerId,
+          amount: newTransaction.amount,
+          currency: newTransaction.currency,
+          service_type: newTransaction.type,
+          region: 'Default',
+          timestamp: newTransaction.timestamp,
+          status: newTransaction.status
+        });
+      }
       
       setStats(prev => ({
         processing: prev.processing + (newTransaction.status === 'processing' ? 1 : 0),
@@ -90,6 +110,10 @@ export const RealTimeMonitor: React.FC = () => {
     return new Date(timestamp).toLocaleTimeString();
   };
 
+  const formatAmount = (amount: number, currency: Currency) => {
+    const currencyInfo = getAllCurrencies().find(c => c.code === currency);
+    return `${currencyInfo?.symbol || currency}${amount.toFixed(2)}`;
+  };
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -102,7 +126,7 @@ export const RealTimeMonitor: React.FC = () => {
             <div>
               <h2 className="text-xl font-semibold text-gray-900">Real-time Transaction Monitor</h2>
               <p className="text-gray-600">
-                {isMonitoring ? 'Monitoring active transactions' : 'Monitoring paused'}
+                {isMonitoring ? 'Monitoring active - storing to database' : 'Monitoring paused'}
               </p>
             </div>
           </div>
@@ -176,7 +200,10 @@ export const RealTimeMonitor: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100">
         <div className="p-6 border-b border-gray-100">
           <h3 className="text-lg font-semibold text-gray-900">Live Transaction Feed</h3>
-          <p className="text-sm text-gray-500 mt-1">Real-time transaction processing and analysis</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Real-time transaction processing and analysis 
+            {databaseService.isConnectionActive() && <span className="text-green-600 font-medium"> • Storing to database</span>}
+          </p>
         </div>
         
         <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
@@ -209,6 +236,7 @@ export const RealTimeMonitor: React.FC = () => {
                       <div className="flex items-center space-x-4 text-xs text-gray-500">
                         <span>{transaction.type}</span>
                         <span>{transaction.customerId}</span>
+                        <span className="font-medium text-blue-600">{transaction.currency}</span>
                         <span>{formatTime(transaction.timestamp)}</span>
                       </div>
                     </div>
@@ -216,7 +244,7 @@ export const RealTimeMonitor: React.FC = () => {
                   
                   <div className="text-right">
                     <p className="text-sm font-semibold text-gray-900">
-                      ${transaction.amount.toFixed(2)}
+                      {formatAmount(transaction.amount, transaction.currency)}
                     </p>
                   </div>
                 </div>
